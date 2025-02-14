@@ -25,6 +25,10 @@ import jax.numpy as jnp
 import numpy
 from functools import partial
 
+INT_TYPE = jnp.int32
+FLOAT_TYPE = jnp.float32
+
+
 def atan2_2pi(y, x):
     val = jnp.arctan2(y, x)
     #return val + (val < 0)*2*jnp.pi
@@ -669,3 +673,183 @@ def convert_map(in_scheme, out_scheme, map):
     nside = get_nside(map)
     permutation = jax.vmap(lambda hp: to_scheme_funcs[in_scheme](nside, *from_scheme_funcs[out_scheme](nside, hp)))(jnp.arange(12*nside*nside))
     return map[permutation]
+
+def ring_above(z, nside):
+    """
+    Given z = cos(theta) and HEALPix nside,
+    returns the ring index just above the input z.
+    """
+    az = jnp.abs(z)
+    # For the equatorial region we simply cast to int.
+    equatorial = (nside * (2 - 1.5 * z)).astype(INT_TYPE)
+    # For the polar region, compute iring.
+    iring = (nside * jnp.sqrt(3 * (1 - az))).astype(INT_TYPE)
+    return jnp.where(az <= 2.0 / 3.0, equatorial, jnp.where(z > 0, iring, 4 * nside - iring - 1))
+
+def get_ring_info2(ring, nside):
+    """
+    For a given ring number and HEALPix nside,
+    computes the following:
+      - startpix  : starting pixel index for that ring
+      - ringpix   : number of pixels in the ring
+      - theta     : (characteristic) colatitude of the ring
+      - shifted   : boolean flag indicating if the ring uses a half-pixel shift
+    """
+    npix = INT_TYPE(12 * nside * nside)
+    ncap = INT_TYPE(2 * nside * (nside - 1))
+    fact2 = FLOAT_TYPE(1 / (3 * nside * nside))
+    fact1 = FLOAT_TYPE(2 / (3 * nside))
+
+    # Define northring: if ring > 2*nside, then use its mirror in the north.
+    northring = jnp.where(ring > 2 * nside, 4 * nside - ring, ring)
+
+    # Use jax.lax.cond to branch on whether we are in the polar cap or equatorial region.
+    def polar_info(_):
+        tmp = northring * northring * fact2
+        costheta = 1 - tmp
+        sintheta = jnp.sqrt(tmp * (2 - tmp))
+        theta_val = jnp.arctan2(sintheta, costheta)
+        ringpix_val = 4 * northring
+        shifted_val = True
+        startpix_val = 2 * northring * (northring - 1)
+        return startpix_val, ringpix_val, theta_val, shifted_val
+
+    def equatorial_info(_):
+        theta_val = jnp.arccos((2 * nside - northring) * fact1)
+        ringpix_val = 4 * nside
+        # shifted is True if (northring - nside) is even.
+        shifted_val = jnp.equal(jnp.mod(northring - nside, 2), 0)
+        startpix_val = ncap + (northring - nside) * ringpix_val
+        return startpix_val, ringpix_val, theta_val, shifted_val
+
+    startpix, ringpix, theta_val, shifted = jax.lax.cond(northring < nside,
+                                                       polar_info,
+                                                       equatorial_info,
+                                                       operand=None)
+    # If we are in the southern hemisphere, adjust theta and startpix.
+    is_southern = (northring != ring)
+    theta_val = jnp.where(is_southern, jnp.pi - theta_val, theta_val)
+    startpix = jnp.where(is_southern, npix - startpix - ringpix, startpix)
+
+    return startpix, ringpix, theta_val, shifted
+
+
+def _get_interpol_scalar(theta, phi, nside):
+    """
+    Given a pointing (with keys 'theta' and 'phi') and HEALPix nside,
+    compute 4 pixel indices and their interpolation weights.
+    """
+    twopi = FLOAT_TYPE(2 * jnp.pi)
+    onefourth = FLOAT_TYPE(0.25)
+    
+    z = jnp.cos(theta)
+    ir1 = ring_above(z, nside)
+    ir2 = ir1 + 1
+
+    # Initialize arrays for pixel indices and weights.
+    pix = jnp.zeros(4, dtype=INT_TYPE)
+    wgt = jnp.zeros(4, dtype=FLOAT_TYPE)
+
+    # --- Compute phi interpolation for ring ir1 (if ir1 > 0) ---
+    def block_ir1(_):
+        sp, nr, theta1, shift = get_ring_info2(ir1, nside)
+        dphi = twopi / nr
+        tmp = phi / dphi - 0.5 * shift
+        # Use truncation instead of floor.
+        i1 = jnp.where(tmp < 0, jnp.trunc(tmp) - 1, jnp.trunc(tmp)).astype(INT_TYPE)
+        w1 = (phi - (i1 + 0.5 * shift) * dphi) / dphi
+        i2 = i1 + 1
+        i1 = jnp.where(i1 < 0, i1 + nr, i1)
+        i2 = jnp.where(i2 >= nr, i2 - nr, i2)
+        pix_updated = pix.at[0].set(sp + i1)
+        pix_updated = pix_updated.at[1].set(sp + i2)
+        wgt_updated = wgt.at[0].set(1 - w1)
+        wgt_updated = wgt_updated.at[1].set(w1)
+        return pix_updated, wgt_updated, theta1
+    
+    def block_ir2(_):
+        sp, nr, theta2, shift = get_ring_info2(ir2, nside)
+        dphi = twopi / nr
+        tmp = phi / dphi - 0.5 * shift
+        i1 = jnp.where(tmp < 0, jnp.trunc(tmp) - 1, jnp.trunc(tmp)).astype(INT_TYPE)
+        w1 = (phi - (i1 + 0.5 * shift) * dphi) / dphi
+        i2 = i1 + 1
+        i1 = jnp.where(i1 < 0, i1 + nr, i1)
+        i2 = jnp.where(i2 >= nr, i2 - nr, i2)
+        pix_updated = pix.at[2].set(sp + i1)
+        pix_updated = pix_updated.at[3].set(sp + i2)
+        wgt_updated = wgt.at[2].set(1 - w1)
+        wgt_updated = wgt_updated.at[3].set(w1)
+        return pix_updated, wgt_updated, theta2
+
+    pix, wgt, theta1 = jax.lax.cond(ir1 > 0,
+                                block_ir1,
+                                lambda _: (pix, wgt, FLOAT_TYPE(0.0)),
+                                operand=None)
+
+    pix, wgt, theta2 = jax.lax.cond(ir2 < (4 * nside),
+                                block_ir2,
+                                lambda _: (pix, wgt, FLOAT_TYPE(0.0)),
+                                operand=None)
+
+    # --- Special case: North polar cap ---
+    def case_ir1_zero(_):
+        wtheta = theta / theta2
+        wgt_updated = wgt.at[2].set(wgt[2] * wtheta)
+        wgt_updated = wgt_updated.at[3].set(wgt[3] * wtheta)
+        fac = (1 - wtheta) * onefourth
+        wgt_updated = wgt_updated.at[0].set(fac)
+        wgt_updated = wgt_updated.at[1].set(fac)
+        wgt_updated = wgt_updated.at[2].set(wgt_updated[2] + fac)
+        wgt_updated = wgt_updated.at[3].set(wgt_updated[3] + fac)
+        pix_updated = pix.at[0].set((pix[2] + 2) & 3)
+        pix_updated = pix_updated.at[1].set((pix[3] + 2) & 3)
+        return pix_updated, wgt_updated
+
+    pix, wgt = jax.lax.cond(ir1 == 0,
+                        case_ir1_zero,
+                        lambda _: (pix, wgt),
+                        operand=None)
+
+    # --- Special case: South polar cap ---
+    def case_ir2_eq(_):
+        wtheta = (theta - theta1) / (jnp.pi - theta1)
+        wgt_updated = wgt.at[0].set(wgt[0] * (1 - wtheta) + wtheta * onefourth)
+        wgt_updated = wgt_updated.at[1].set(wgt[1] * (1 - wtheta) + wtheta * onefourth)
+        wgt_updated = wgt_updated.at[2].set(wtheta * onefourth)
+        wgt_updated = wgt_updated.at[3].set(wtheta * onefourth)
+        npix = 12 * nside * nside
+        pix_updated = pix.at[2].set(((pix[0] + 2) & 3) + (npix - 4))
+        pix_updated = pix_updated.at[3].set(((pix[1] + 2) & 3) + (npix - 4))
+        return pix_updated, wgt_updated
+
+    pix, wgt = jax.lax.cond(ir2 == 4 * nside,
+                        case_ir2_eq,
+                        lambda _: (pix, wgt),
+                        operand=None)
+
+    # --- General (equatorial) case: interpolate in theta ---
+    # (This branch multiplies the phi weights by the theta interpolation factor.)
+    def general_case(_):
+        wtheta = (theta - theta1) / (theta2 - theta1)
+        wgt_updated = wgt.at[0].set(wgt[0] * (1 - wtheta))
+        wgt_updated = wgt_updated.at[1].set(wgt[1] * (1 - wtheta))
+        wgt_updated = wgt_updated.at[2].set(wgt[2] * wtheta)
+        wgt_updated = wgt_updated.at[3].set(wgt[3] * wtheta)
+        return pix, wgt_updated
+
+    # Only execute the general case if neither special case applied.
+    pix, wgt = jax.lax.cond((ir1 != 0) & (ir2 != 4 * nside),
+                        general_case,
+                        lambda _: (pix, wgt),
+                        operand=None)
+    return pix, wgt
+
+def get_interpol(theta, phi, nside):
+    # vmap over the scalar interpolation function.
+    pix_flat, wgt_flat = jax.vmap(lambda th, ph: _get_interpol_scalar(th, ph, nside), out_axes=1)(theta.ravel(), phi.ravel())
+    # Reshape outputs to original input shape with an extra dimension for 4 neighbors.
+    new_shape = (4,) + theta.shape
+    pix_out = pix_flat.reshape(new_shape)
+    wgt_out = wgt_flat.reshape(new_shape)
+    return pix_out, wgt_out

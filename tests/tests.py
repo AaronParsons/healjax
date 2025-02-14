@@ -202,5 +202,25 @@ class TestIndexingMethods(unittest.TestCase):
             self.assertTrue((numpy.abs(truth_map_xy - test_map_xy) <= error_tol * numpy.finfo(truth_map.dtype).eps * numpy.abs(truth_map_xy)).all(), (truth_map_xy, test_map_xy, truth_map))
 
 
+class TestInterpolationMethods(unittest.TestCase):
+    def test_get_interp_weights(self):
+        numpy.random.seed(0)
+        theta_all =  numpy.random.uniform(0, numpy.pi, 900)
+        phi_all =  numpy.random.uniform(0, numpy.pi, 2*900)
+        _phi, _theta = numpy.meshgrid(phi_all, theta_all)
+        _phi = _phi.astype(healjax.FLOAT_TYPE)
+        _theta = _theta.astype(healjax.FLOAT_TYPE)
+        get_interpol = jax.jit(healjax.get_interp_weights)
+        for nside in test_nsides:
+            nside = healjax.INT_TYPE(nside)
+            data = numpy.random.normal(size=12*nside**2).astype(healjax.FLOAT_TYPE)
+            pix_true, wgts_true = astropy_healpix.healpy.get_interp_weights(nside, _theta, _phi, nest=False)
+            dinterp_true = numpy.sum(data[pix_true] * wgts_true, axis=0)
+            pix, wgts = get_interpol(_theta, _phi, nside)
+            dinterp = numpy.sum(data[pix] * wgts, axis=0)
+            diff = (dinterp - dinterp_true)
+            x, y = numpy.where(numpy.abs(diff) > 3e-3)  # XXX increasing error with nside
+            self.assertTrue(x.size == 0)
+
 if __name__ == '__main__':
     unittest.main()
