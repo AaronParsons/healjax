@@ -402,13 +402,13 @@ def healpixl_ring_to_xy(nside, hp):
         v = F1 * nside - ringind - 1
         h = 2 * postlongind - s - F2*nside
         h = h - R
-        prex = ((v + h) / 2).astype(int)
-        prey = ((v - h) / 2).astype(int)
+        prex = ((v + h) / 2).astype(hp.dtype)
+        prey = ((v - h) / 2).astype(hp.dtype)
 
         tweak = jnp.logical_or((v != (prex+prey)), (h != (prex-prey)))
         h = h + tweak
-        x = ((v + h) / 2).astype(int)
-        y = ((v - h) / 2).astype(int)
+        x = ((v + h) / 2).astype(hp.dtype)
+        y = ((v - h) / 2).astype(hp.dtype)
         return bighp, x, y
     
     def largering(): # otherwise
