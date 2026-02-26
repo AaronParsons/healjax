@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "healjax"
+version = "0.2.2"
+description = "Healpix routines for JAX."
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "ghcollin" }, { name = "AaronParsons" }]
+keywords = ["jax", "healpix", "healpy"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Information Technology",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.11",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
+requires-python = ">=3.11"
+dependencies = ["numpy"]
+
+[project.urls]
+Homepage = "https://github.com/AaronParsons/healjax"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["healjax"]
