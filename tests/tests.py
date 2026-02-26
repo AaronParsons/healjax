@@ -592,5 +592,81 @@ class TestDifferentiability(unittest.TestCase):
                             f"nside={nside}: pixel indices out of range; min={pix_arr.min()}, max={pix_arr.max()}, npix={npix}")
 
 
+class TestPrecomputedRingTable(unittest.TestCase):
+    """Tests for precompute_ring_info and get_interp_weights_precomp."""
+
+    def test_precompute_ring_info_matches_get_ring_info2(self):
+        """precompute_ring_info should agree with get_ring_info2 for every ring."""
+        for nside in [2, 4, 16, 64]:
+            nside_j = healjax.INT_TYPE(nside)
+            sp_tab, rp_tab, th_tab, sh_tab = healjax.precompute_ring_info(nside_j)
+            for ring in range(1, 4 * nside):
+                ring_j = healjax.INT_TYPE(ring)
+                sp, rp, th, sh = healjax.get_ring_info2(ring_j, nside_j)
+                idx = ring - 1
+                self.assertEqual(int(sp_tab[idx]), int(sp),
+                                 f"startpix mismatch nside={nside} ring={ring}")
+                self.assertEqual(int(rp_tab[idx]), int(rp),
+                                 f"ringpix mismatch nside={nside} ring={ring}")
+                self.assertAlmostEqual(float(th_tab[idx]), float(th), places=5,
+                                       msg=f"theta mismatch nside={nside} ring={ring}")
+                self.assertEqual(bool(sh_tab[idx]), bool(sh),
+                                 f"shifted mismatch nside={nside} ring={ring}")
+
+    def test_get_interp_weights_precomp_matches_standard(self):
+        """get_interp_weights_precomp should give the same pixels and weights
+        as get_interp_weights for a range of (theta, phi) coordinates."""
+        numpy.random.seed(77)
+        thetas = numpy.random.uniform(edge_eps, numpy.pi - edge_eps, 1000).astype(healjax.FLOAT_TYPE)
+        phis   = numpy.random.uniform(edge_eps, 2*numpy.pi - edge_eps, 1000).astype(healjax.FLOAT_TYPE)
+        for nside in [4, 16, 64, 256]:
+            nside_j    = healjax.INT_TYPE(nside)
+            ring_table = healjax.precompute_ring_info(nside_j)
+            pix_std,  wgt_std  = healjax.get_interp_weights(thetas, phis, nside_j)
+            pix_pre,  wgt_pre  = healjax.get_interp_weights_precomp(thetas, phis, nside_j, ring_table)
+            self.assertTrue((numpy.array(pix_std) == numpy.array(pix_pre)).all(),
+                            f"nside={nside}: pixel indices differ")
+            self.assertTrue(numpy.allclose(numpy.array(wgt_std), numpy.array(wgt_pre), atol=1e-6),
+                            f"nside={nside}: weights differ; "
+                            f"max diff={numpy.max(numpy.abs(numpy.array(wgt_std) - numpy.array(wgt_pre))):.2e}")
+
+    def test_get_interp_weights_precomp_poles_and_seam(self):
+        """Edge-case coordinates near poles and phi=0/2pi seam."""
+        nside_j    = healjax.INT_TYPE(16)
+        ring_table = healjax.precompute_ring_info(nside_j)
+        # Near north pole
+        thetas = numpy.array([edge_eps, 2*edge_eps, 0.01], dtype=healjax.FLOAT_TYPE)
+        phis   = numpy.array([0.1, 2.5, 5.0],              dtype=healjax.FLOAT_TYPE)
+        pix_std, wgt_std = healjax.get_interp_weights(thetas, phis, nside_j)
+        pix_pre, wgt_pre = healjax.get_interp_weights_precomp(thetas, phis, nside_j, ring_table)
+        self.assertTrue((numpy.array(pix_std) == numpy.array(pix_pre)).all(),
+                        "North pole edge case: pixel mismatch")
+        self.assertTrue(numpy.allclose(numpy.array(wgt_std), numpy.array(wgt_pre), atol=1e-6),
+                        "North pole edge case: weight mismatch")
+        # Near south pole
+        thetas = numpy.array([numpy.pi - edge_eps, numpy.pi - 0.01], dtype=healjax.FLOAT_TYPE)
+        phis   = numpy.array([1.0, 4.0],                              dtype=healjax.FLOAT_TYPE)
+        pix_std, wgt_std = healjax.get_interp_weights(thetas, phis, nside_j)
+        pix_pre, wgt_pre = healjax.get_interp_weights_precomp(thetas, phis, nside_j, ring_table)
+        self.assertTrue((numpy.array(pix_std) == numpy.array(pix_pre)).all(),
+                        "South pole edge case: pixel mismatch")
+        self.assertTrue(numpy.allclose(numpy.array(wgt_std), numpy.array(wgt_pre), atol=1e-6),
+                        "South pole edge case: weight mismatch")
+
+    def test_get_interp_weights_precomp_weights_sum_to_one(self):
+        """Partition-of-unity check for the precomputed-table path."""
+        numpy.random.seed(66)
+        thetas = numpy.random.uniform(edge_eps, numpy.pi - edge_eps, 500).astype(healjax.FLOAT_TYPE)
+        phis   = numpy.random.uniform(edge_eps, 2*numpy.pi - edge_eps, 500).astype(healjax.FLOAT_TYPE)
+        for nside in [4, 64]:
+            nside_j    = healjax.INT_TYPE(nside)
+            ring_table = healjax.precompute_ring_info(nside_j)
+            _, wgt = healjax.get_interp_weights_precomp(thetas, phis, nside_j, ring_table)
+            wgt_sum = numpy.array(wgt).sum(axis=0)
+            self.assertTrue(numpy.allclose(wgt_sum, 1.0, atol=1e-5),
+                            f"nside={nside}: weights don't sum to 1; "
+                            f"max deviation={numpy.max(numpy.abs(wgt_sum - 1.0)):.2e}")
+
+
 if __name__ == '__main__':
     unittest.main()
