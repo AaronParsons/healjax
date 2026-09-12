@@ -31,5 +31,4 @@ test = ["pytest", "healpy", "astropy", "scipy", "astropy-healpix"]
 Homepage = "https://github.com/AaronParsons/healjax"
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = ["healjax", "healjax.*"]
+where = ["src"]
