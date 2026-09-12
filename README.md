@@ -7,10 +7,57 @@ These routines are ports of the BSD licensed healpix library https://github.com/
 # Installation
 
 ```
-pip install git+https://github.com/ghcollin/healjax.git
+pip install git+https://github.com/AaronParsons/healjax.git
 ```
 
-You will need to have installed JAX yourself.
+The low-level pixel functions need only `numpy` and `jax`. The `healjax.maps`
+object layer additionally uses `healpy` (scheme conversion, spherical harmonic
+transforms), `astropy` (FITS I/O) and `scipy` (spherical harmonic fitting);
+install those with the `maps` extra:
+
+```
+pip install 'healjax[maps] @ git+https://github.com/AaronParsons/healjax.git'
+```
+
+These are imported lazily, so the error only appears if you call a feature
+that needs them.
+
+# Package layout
+
+ - `healjax` — the low-level JAX pixel functions documented below
+   (`ang2pix`, `vec2pix`, `get_interp_weights`, …).
+ - `healjax.maps` — the object layer: `HealpixBase`, `Alm`, `HealpixMap` and
+   `HPM`, plus spherical harmonic fitting (`sph_fit`, `fit_alms_from_maps`,
+   `alms_to_filled_maps`).
+ - `healjax.coord` — coordinate transforms: `rot_m`, `xyz2thphi`,
+   `thphi2xyz`, `eq2top_m`, and the usual eq/topocentric helpers. Each
+   dispatches on its input, returning NumPy for NumPy and JAX for JAX.
+ - `healjax.interp` — `interpolate_map` and `rotate_interpolate_and_sum`,
+   jitted with `nside` as a static argument.
+
+The most common symbols (`HPM`, `rot_m`, `interpolate_map`, …) are re-exported
+at the package root.
+
+## `HPM`
+
+`HPM` is the main user-facing map container: a `HealpixMap` whose coordinate
+lookup and interpolation run through the JAX kernels. It replaces both
+`aipy.healpix.HealpixMap` and the per-package `HPM` copies that used to live in
+`eigsep_sim` and `eigsep_data`, and carries no aipy dependency.
+
+```python
+import numpy as np
+import healjax
+
+hpm = healjax.HPM(nside=64, interp=True)
+hpm.set_map(sky_map)              # (npix,) or (npix, nfreq)
+vals = hpm[theta, phi]            # interpolated read
+vals = hpm[x, y, z]               # same, Cartesian
+data = hpm.rotate_interpolate_and_sum(sky, crds, rot_ms)
+```
+
+Only the RING scheme is supported on the JAX interpolation path; interpolating
+a NEST-ordered `HPM` raises `NotImplementedError`.
 
 # Some notes
 
