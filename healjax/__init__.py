@@ -24,3 +24,10 @@ from .healjax import vec2pix, ang2pix_radec, ang2pix, pix2vec, pix2ang_radec, pi
 from .healjax import get_interpol as get_interp_weights
 from .healjax import precompute_ring_info, get_interpol_precomp as get_interp_weights_precomp
 from .healjax import FLOAT_TYPE, INT_TYPE
+
+# Subpackages layered on top of the pixel functions above.  These are imported
+# after `.healjax` so that their `from ..healjax import ...` lines resolve.
+from . import coord, interp, maps
+from .coord import eq2top_m, rot_m, thphi2xyz, xyz2thphi
+from .interp import interpolate_map, rotate_interpolate_and_sum
+from .maps import HPM, Alm, HealpixBase, HealpixMap

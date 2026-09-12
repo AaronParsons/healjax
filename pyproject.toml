@@ -19,11 +19,17 @@ classifiers = [
     "Topic :: Software Development :: Libraries :: Python Modules",
 ]
 requires-python = ">=3.11"
-dependencies = ["numpy"]
+dependencies = ["numpy", "jax"]
+
+[project.optional-dependencies]
+# healjax.maps: pixel-scheme conversion and spherical harmonics (healpy),
+# FITS I/O (astropy), and spherical-harmonic fitting (scipy).
+maps = ["healpy", "astropy", "scipy"]
+test = ["pytest", "healpy", "astropy", "scipy", "astropy-healpix"]
 
 [project.urls]
 Homepage = "https://github.com/AaronParsons/healjax"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["healjax"]
+include = ["healjax", "healjax.*"]
